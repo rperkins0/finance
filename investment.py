@@ -7,7 +7,7 @@ from matplotlib.dates import DateFormatter
 import pandas as pd
 
 
-class fund(pd.DataFrame):
+class account(pd.DataFrame):
     _metadata = ['name',
                  'subname',
                  'funds',
