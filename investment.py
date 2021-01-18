@@ -40,7 +40,7 @@ class account(pd.DataFrame):
     # this makes built-in panda methods return 'fund' class, not 'DataFrame' class
     @property
     def _constructor(self):
-        return fund
+        return account
 
     def fileload(self, path):
         """
@@ -85,22 +85,50 @@ class account(pd.DataFrame):
         file.close()
         return (name, subname, path, funds, alloc, temp)
 
-    def status(self):
+    def date_converter(self, date_representation=None):
+        """
+        Convert a datetime.datetime object or string to a datetime.datetime.date object.  By default (if given no
+        arguement) returns today's date.
+        :param date_representation: String or datetime.datetime object to convert.  Defaults to None
+        :return: datetime.datetime.date object
+        """
+        if not date_representation:
+            this_date = datetime.datetime.date(datetime.datetime.now())
+        else:
+            if isinstance(date_representation, str):
+                try:
+                    this_date = datetime.datetime.date(pd.to_datetime(date_representation))
+                except ValueError as err:
+                    raise ValueError("Date string %s not formatted properly; exiting"%date_representation) from err
+
+            else:
+                try:
+                    this_date = datetime.datetime.date(date_representation)
+                except TypeError as err:
+                    x = str(type(date_representation))
+                    raise TypeError('date argument is of invalid type %s' % x) from err
+        return this_date
+
+    def status(self, date=None):
         """
         Add a 'status' line to the DataFrame.
+        :param date: optional argument to pass a date.  Can either be string, datetime object, or pandas Timestamp.  Defaults to today.
+        :return:
         """
-        today = datetime.datetime.date(datetime.datetime.now())
+        formatted_date = self.date_converter(date_representation=date)
         current = {}
         current['type'] = 'status'
-        current['date'] = today
+        current['date'] = formatted_date
         for f in self.funds:
-            fund_status_string = input("Current value of " + f)
+            fund_status_string = input("Current value of " + f + ": ")
             current[f] = int(fund_status_string)
 
         New_DataFrame_toAppend = pd.DataFrame(current, index=[0])
+        self.append_dataframe(New_DataFrame_toAppend)
 
+    def append_dataframe(self, df):
         # can't believe this works, but it does and retains metadata!
-        super().__init__(data=self.append(New_DataFrame_toAppend,
+        super().__init__(data=self.append(df,
                                           sort=False,
                                           ignore_index=True
                                           )
@@ -149,6 +177,7 @@ class account(pd.DataFrame):
 
     def transact(self,
                  amounts=False,
+                 date=None
                  ):
         """
         Commit money to each fund.  Adds two new lines: an 'invest'
@@ -161,21 +190,27 @@ class account(pd.DataFrame):
         # interactive method of entering funding amounts
         if not amounts:
             amounts = [int(input('Investment in ' + f + ': ')) for f in self.funds]
-
-        today = datetime.datetime.date(datetime.datetime.now())
+        else:
+            if len(amounts) != len(self.funds):
+                raise ValueError('Incorrect number of elements in amounts')
 
         current = {'type': 'transact'}
-        current['date'] = today
+        current['date'] = self.date_converter(date_representation=date)
         for each_fund, amount in zip(self.funds, amounts):
-            current[each_fund] = amount
+            try:
+                current[each_fund] = int(amount)
+            except ValueError as error:
+                raise ValueError('Cannot convert '+str(amount)+' into an int') from error
 
-        New_DataFrame_toAppend = pd.DataFrame(current, index=[today])
+        New_DataFrame_toAppend = pd.DataFrame(current, index=[0])
+        self.append_dataframe(New_DataFrame_toAppend)
 
-        super().__init__(data=self.append(New_DataFrame_toAppend,
-                                          sort=False,
-                                          ignore_index=True
-                                          )
-                         )
+        last_status =self._laststatus()
+        for (each_fund, amount) in zip(self.funds, amounts):
+            current[each_fund] += last_status[each_fund]
+            print(current[each_fund])
+        current['type'] = 'status'
+        self.append_dataframe(pd.DataFrame(current, index=[0]))
 
     def filewrite(self,
                   trial=False,
@@ -267,10 +302,48 @@ class account(pd.DataFrame):
             except ValueError:
                 print("Must enter a number")
                 
-                
+    
                 return
         if tally != 1.0:
-            print('Entries must total 1.0')
-            return
+            raise ValueError(("Allocations do not total 1.0."
+                              " Allocations unmodified; try again."
+                              )
+                             )
         else:
             self.alloc = new_alloc_dict
+
+    def add_fund(self, name:str):
+        """
+        Add a new fund to account:
+        - add new column (of zeros) to DataFrame
+        - append name to self.funds
+        - add new entry to self.alloc
+        - invoke self.alloc_change() to set new allocations
+        """
+        if name in self:
+            raise ValueError(("Trying to add fund {0} to account {1}: "
+                              "fund already exists account."
+                              ).format(name,self.name)
+                             )
+        
+        print("Adding new fund {0} to account {1}:{2}.".format(name,
+                                                               self.name,
+                                                               self.subname)
+              )
+        self[name] = 0
+        self.funds.append(name)
+
+        print("Existing allocations:")
+        for key in self.alloc:
+            print("\t{0}: {1:4.1f}% with".format(key,
+                                                 self.alloc[key][0]*100),
+                  *self.alloc[key][1]
+                  )
+        key  = input("Enter allocation: either one from above, or new: ")
+        if key in self.alloc:
+            print("Appending to existing key")
+            self.alloc[key][1].add(name)
+        else:
+            self.alloc[key] = (0.000, {name})
+
+        self.alloc_change()
