@@ -5,9 +5,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
 import pandas as pd
+from typing import List
 
+import allocation
+import investment_types
 
-class account(pd.DataFrame):
+class Account(pd.DataFrame):
     _metadata = ['name',
                  'subname',
                  'funds',
@@ -25,7 +28,7 @@ class account(pd.DataFrame):
         for built-in panda functions to work properly (avoid
         BlockManager errors).
         """
-        if data == None:
+        if data is None:
             (name, subname, path, funds, alloc, temp) = self.fileload(file)
             super().__init__(data=temp)
             self.name = name
@@ -40,9 +43,10 @@ class account(pd.DataFrame):
     # this makes built-in panda methods return 'fund' class, not 'DataFrame' class
     @property
     def _constructor(self):
-        return account
+        return Account
 
-    def fileload(self, path):
+    @staticmethod
+    def fileload(path):
         """
         Given a path to a formatted csv, open csv, parse header, and return body as a panda.
         :param path: path to csv file
@@ -54,38 +58,34 @@ class account(pd.DataFrame):
         alloc -- custom structure: a list of 2-tuples, first item is target percentage of total in this category,
         second is a set of fund names
         """
-        file = open(path, mode='r')
+        with open(path, mode='r') as file:
 
-        # because DataFrame.to_csv() method writes extraneous commas,
-        # must do some string juggling while parsing header
+            # read first line and extract name
+            name = file.readline().strip()
+            # read second line and extract subname
+            subname = file.readline().strip()
+            # read third line and extract list of funds
+            funds = file.readline().strip().split(',')
+            # read allocations
+            percentage = 0.
+            alloc = allocation.Allocation()
+            while percentage < 1.0:
+                line = file.readline().strip()  # remove \n at end!
+                # parse line to get (itype, percent, fundlist)
+                construction_parameters = allocation.AllocationEntry.parse_csv_str(line)
+                alloc.append(allocation.AllocationEntry(*construction_parameters))
+                percentage += construction_parameters[1]
+            alloc.check_percentages()  # raise Exception if percents do not total 1.0
+            # read rest of file as a DataFrame
+            temp = pd.read_csv(file, parse_dates=['date'])
+            # column 'date' imported as datetime object
+            # convert to date object
+            temp['date'] = temp['date'].dt.date
 
-        # read first line and extract name
-        name = file.readline().strip().split(',')[0]
-        # read second line and extract subname
-        subname = file.readline().strip().split(',')[0]
-        # read third line and extract list of funds
-        funds = file.readline().strip().split(',')
-        while '' in funds: funds.remove('')
-        # read allocations
-        percentage = 0.
-        alloc = {}
-        while percentage < 1.0:
-            line = file.readline().strip().split(',')
-            while '' in line: line.remove('')
-            key = line.pop(0)
-            percent = float(line.pop(0))
-            alloc[key] = (percent, set(line))
-            percentage += percent
-
-        temp = pd.read_csv(file, parse_dates=['date'])
-        # column 'date' imported as datetime object
-        # convert to date object
-        temp['date'] = temp['date'].dt.date
-
-        file.close()
         return (name, subname, path, funds, alloc, temp)
 
-    def date_converter(self, date_representation=None):
+    @staticmethod
+    def date_converter(date_representation=None):
         """
         Convert a datetime.datetime object or string to a datetime.datetime.date object.  By default (if given no
         arguement) returns today's date.
@@ -99,7 +99,7 @@ class account(pd.DataFrame):
                 try:
                     this_date = datetime.datetime.date(pd.to_datetime(date_representation))
                 except ValueError as err:
-                    raise ValueError("Date string %s not formatted properly; exiting"%date_representation) from err
+                    raise ValueError("Date string %s not formatted properly; exiting" % date_representation) from err
 
             else:
                 try:
@@ -152,6 +152,20 @@ class account(pd.DataFrame):
         status_df = self.loc[self['type'] == 'status']
         return status_df.sort_index().iloc[-1]
 
+    def service_allocations(self) -> List[int]:
+        """
+        For each AllocationEntry, sum the amount in each fund
+        :return: a list of int's
+        """
+        latest = self._laststatus()
+        return [sum(latest[a.fundlist]) for a in self.alloc]
+
+    def service_investment_type(self, it: investment_types.InvestmentType):
+        type_matches = [a for a in self.alloc if type(a.itype) == type(it)]
+        subtotals = [sum(self._laststatus()[a.fundlist]) for a in type_matches]
+        return sum(subtotals)
+
+
     def rebalance(self, new_money=0):
         """
         Calculate how much of each fund to sell/buy in order to
@@ -160,20 +174,7 @@ class account(pd.DataFrame):
 
         Input: new_money -- additional funds to invest
         """
-        latest = self._laststatus()
-
-        total = self.total + new_money
-
-        for key, val in self.alloc.items():
-            value = sum([latest[fund] for fund in val[1]])
-            print(key,
-                  "$%d" % (value),
-                  '%1.3f' % (value / total),
-                  '%1.3f' % val[0],
-                  'SELL' if value / total > val[0] else 'BUY',
-                  int(val[0] * total - value),
-                  sep='\t'
-                  )
+        self.alloc.rebalance(self.service_allocations(), new_funds=new_money)
 
     def transact(self,
                  amounts=False,
@@ -183,10 +184,9 @@ class account(pd.DataFrame):
         Commit money to each fund.  Adds two new lines: an 'invest'
         line and a status line.  Either input a tuple of funds to add,
         OR run with no argument and enter interactively
-        
+
         Input: amount -- an n-tuple of money invested/withdrawn
         """
-
         # interactive method of entering funding amounts
         if not amounts:
             amounts = [int(input('Investment in ' + f + ': ')) for f in self.funds]
@@ -200,21 +200,19 @@ class account(pd.DataFrame):
             try:
                 current[each_fund] = int(amount)
             except ValueError as error:
-                raise ValueError('Cannot convert '+str(amount)+' into an int') from error
+                raise ValueError('Cannot convert ' + str(amount) + ' into an int') from error
 
         New_DataFrame_toAppend = pd.DataFrame(current, index=[0])
         self.append_dataframe(New_DataFrame_toAppend)
 
-        last_status =self._laststatus()
+        last_status = self._laststatus()
         for (each_fund, amount) in zip(self.funds, amounts):
             current[each_fund] += last_status[each_fund]
             print(current[each_fund])
         current['type'] = 'status'
         self.append_dataframe(pd.DataFrame(current, index=[0]))
 
-    def filewrite(self,
-                  trial=False,
-                  ):
+    def filewrite(self, trial=False):
         """
         Overwrite the existing csv with the updated version.  By default,
         saves existing version in the backup folder.
@@ -230,7 +228,7 @@ class account(pd.DataFrame):
         # e.g. location of file, in which case you don't want leading
         # '/' in path)
         path = '/'.join(filesplit[:-1]) + ('/'.join(filesplit[:-1]) and '/')
-        trial_string = 'trial_' if trial else ''
+        trial_string = '_trial' if trial else ''
 
         new_file = open(path + base + trial_string + '.' + extension,
                         mode='w'
@@ -241,13 +239,8 @@ class account(pd.DataFrame):
             new_file.write(entry + '\n')
 
         # write the allocation dictionary
-        for (key, value) in self.alloc.items():
-            new_file.write(','.join([key,
-                                     str(value[0]),
-                                     *value[1]
-                                     ])
-                           )
-            new_file.write('\n')
+        for alloc in self.alloc:
+            new_file.write(alloc.csv_str()+'\n')
 
         self.to_csv(new_file, index=False)
         new_file.close()
@@ -284,35 +277,9 @@ class account(pd.DataFrame):
         years = np.abs(dtime.days) / 365
         justfunds = status_lines[self.funds]
         change = justfunds.iloc[-1] / justfunds.iloc[-2]
-        return (2.72**(np.log(change)/years)-1)*100
+        return (2.72 ** (np.log(change) / years) - 1) * 100
 
-    def alloc_change(self):
-        """
-        Interactively change allocation levels.
-        Checks that entries are valid numbers and total to 1.0.
-        """
-        tally = 0.0
-        new_alloc_dict = {}
-        for key,val in self.alloc.items():
-            try:
-                new_alloc = input('New allocation for'+key+': ') or val[0]
-                new_alloc = float(new_alloc)
-                new_alloc_dict[key] = (new_alloc, val[1])
-                tally += new_alloc
-            except ValueError:
-                print("Must enter a number")
-                
-    
-                return
-        if tally != 1.0:
-            raise ValueError(("Allocations do not total 1.0."
-                              " Allocations unmodified; try again."
-                              )
-                             )
-        else:
-            self.alloc = new_alloc_dict
-
-    def add_fund(self, name:str):
+    def add_fund(self, name: str):
         """
         Add a new fund to account:
         - add new column (of zeros) to DataFrame
@@ -323,9 +290,9 @@ class account(pd.DataFrame):
         if name in self:
             raise ValueError(("Trying to add fund {0} to account {1}: "
                               "fund already exists account."
-                              ).format(name,self.name)
+                              ).format(name, self.name)
                              )
-        
+
         print("Adding new fund {0} to account {1}:{2}.".format(name,
                                                                self.name,
                                                                self.subname)
@@ -334,16 +301,48 @@ class account(pd.DataFrame):
         self.funds.append(name)
 
         print("Existing allocations:")
-        for key in self.alloc:
-            print("\t{0}: {1:4.1f}% with".format(key,
-                                                 self.alloc[key][0]*100),
-                  *self.alloc[key][1]
-                  )
-        key  = input("Enter allocation: either one from above, or new: ")
-        if key in self.alloc:
-            print("Appending to existing key")
-            self.alloc[key][1].add(name)
-        else:
-            self.alloc[key] = (0.000, {name})
+        self.alloc.print()
 
-        self.alloc_change()
+        try:
+            key = input("Enter allocation: either one from above, or new: ")
+            if key in [a.itype.name for a in self.alloc]:
+                print("Appending to existing AllocationEntry")
+                for a in self.alloc:
+                    if key == a.itype.name:
+                        a.fundlist.append(name)
+            else:
+                self.alloc.append(allocation.AllocationEntry(investment_types.__dict__[key],
+                                                             0.0,
+                                                             [name]))
+            self.alloc.alloc_change()
+        except:
+            print("Adding fund to Allocation failed; removing fund from Account.")
+            del self[name]
+            self.funds.pop(-1)
+
+
+class Portfolio(object):
+    def __init__(self, accounts: List[Account], alloc: allocation.Allocation):
+        for a in accounts:
+            if not isinstance(a, Account):
+                raise ValueError(('Porfolio.__init__: accounts parameter must be of type'
+                                  ' Account; got {0}').format(type(a))
+                                 )
+        self.accounts = accounts
+        if not isinstance(alloc, allocation.Allocation):
+            raise ValueError(('Porfolio.__init__: alloc parameter must be of type'
+                              ' Allocation; got {0}').format(type(alloc))
+                             )
+        self.alloc = alloc
+
+    @property
+    def total(self):
+        subtotals = [a.total for a in self.accounts]
+        return sum(subtotals)
+
+    def service_allocations(self):
+        x = [sum([acc.service_investment_type(a.itype) for acc in self.accounts]) for a in self.alloc]
+        return x
+
+    def rebalance(self):
+        self.alloc.rebalance(self.service_allocations())
