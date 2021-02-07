@@ -12,32 +12,32 @@ class InvestmentType(object):
 
 
 class Stock(InvestmentType):
-    def __init__(self, name='Stock'):
+    def __init__(self, name='stock'):
         super().__init__(name=name)
 
 
 class StockInt(Stock):
-    def __init__(self, name='StockInt'):
+    def __init__(self, name='stockInt'):
         super().__init__(name=name)
 
 
 class Bond(InvestmentType):
-    def __init__(self, name='Bond'):
+    def __init__(self, name='bond'):
         super().__init__(name=name)
 
 
 class RealEstate(InvestmentType):
-    def __init__(self, name='RealEstate'):
+    def __init__(self, name='realEstate'):
         super().__init__(name=name)
 
 
 class Cash(InvestmentType):
-    def __init__(self, name='Cash'):
+    def __init__(self, name='cash'):
         super().__init__(name=name)
 
 
 class TargetDate(InvestmentType):
-    def __init__(self, name='TargetDate'):
+    def __init__(self, name='targetDate'):
         super().__init__(name=name)
 
 

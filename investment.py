@@ -10,6 +10,7 @@ from typing import List
 import allocation
 import investment_types
 
+
 class Account(pd.DataFrame):
     _metadata = ['name',
                  'subname',
@@ -88,7 +89,7 @@ class Account(pd.DataFrame):
     def date_converter(date_representation=None):
         """
         Convert a datetime.datetime object or string to a datetime.datetime.date object.  By default (if given no
-        arguement) returns today's date.
+        argument) returns today's date.
         :param date_representation: String or datetime.datetime object to convert.  Defaults to None
         :return: datetime.datetime.date object
         """
@@ -205,12 +206,29 @@ class Account(pd.DataFrame):
         New_DataFrame_toAppend = pd.DataFrame(current, index=[0])
         self.append_dataframe(New_DataFrame_toAppend)
 
-        last_status = self._laststatus()
+        # update 2021-02-07
+        # last_status = self._laststatus()
+        last_status = self[self['date'] <= current['date']]._laststatus()
         for (each_fund, amount) in zip(self.funds, amounts):
             current[each_fund] += last_status[each_fund]
             print(current[each_fund])
         current['type'] = 'status'
         self.append_dataframe(pd.DataFrame(current, index=[0]))
+        self._mysort()
+
+    def _mysort(self):
+        """
+        Sort the DataFrame by date and then index, e.g. sort by date, but for all status and
+        transaction lines with the same date, preserve their original order
+        """
+        # we will use the sort_values method of DataFrame, which cannot operate
+        # on both columns and rows (indices).  So make a column duplicating index.
+        self['indexer'] = self.index
+        self.sort_values(by=['date', 'indexer'],  # sort first by date, then index
+                         inplace=True)
+        self.drop('indexer',  # remove auxiliary column; it served its purpose
+                  axis=1,  # tell drop to remove a column, not index
+                  inplace=True)
 
     def filewrite(self, trial=False):
         """

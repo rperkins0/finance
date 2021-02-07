@@ -19,3 +19,11 @@ my_alloc = allocation.Allocation([allocation.AllocationEntry(investment_types.St
 
 td  = investment.Portfolio(accounts=[td_i,td_r, td_b],
                            alloc=my_alloc)
+
+kitchensink = investment.Portfolio(accounts=[td_i,
+                                             td_r,
+                                             td_b,
+                                             v,
+                                             mit401,
+                                             tiaa],
+                                   alloc=my_alloc)
