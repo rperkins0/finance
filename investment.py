@@ -362,5 +362,6 @@ class Portfolio(object):
         x = [sum([acc.service_investment_type(a.itype) for acc in self.accounts]) for a in self.alloc]
         return x
 
-    def rebalance(self):
-        self.alloc.rebalance(self.service_allocations())
+    def rebalance(self, new_funds=0):
+        self.alloc.rebalance(self.service_allocations(),
+                             new_funds=new_funds)
